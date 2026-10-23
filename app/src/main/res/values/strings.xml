@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">برش‌یار شیشه</string>
+    <string name="err_title">اتصال برقرار نشد</string>
+    <string name="err_offline">برای بارگذاری برنامه به اینترنت نیاز است. پس از اولین بارگذاری موفق، برنامه بدون اینترنت هم باز می‌شود.</string>
+    <string name="err_retry">تلاش دوباره</string>
+    <string name="err_webview_title">به‌روزرسانی لازم است</string>
+    <string name="err_webview">نسخهٔ «Android System WebView» این دستگاه قدیمی است و از اتصال امن برنامه پشتیبانی نمی‌کند. آن را (یا مرورگر Chrome را) به‌روزرسانی کنید و برنامه را دوباره باز کنید.</string>
+    <string name="dialog_ok">تأیید</string>
+    <string name="dialog_cancel">انصراف</string>
+    <string name="push_channel_id" translatable="false">general</string>
+    <string name="push_channel_name">اعلان‌های عمومی</string>
+    <string name="share_title">ذخیره یا ارسال فایل</string>
+</resources>

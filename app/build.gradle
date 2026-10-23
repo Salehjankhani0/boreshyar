@@ -1,0 +1,123 @@
+plugins {
+    id 'com.android.application'
+}
+
+/* ---- Firebase: فقط اگر google-services.json وجود داشته باشد فعال می‌شود (وگرنه پروژه مثل قبل بیلد می‌شود) ---- */
+def hasFirebase = ['google-services.json', 'src/myket/google-services.json', 'src/bazaar/google-services.json',
+                   'src/release/google-services.json', 'src/debug/google-services.json'].any { file(it).exists() }
+if (hasFirebase) {
+    apply plugin: 'com.google.gms.google-services'
+    apply plugin: 'com.google.firebase.crashlytics'
+} else {
+    logger.warn('⚠️ google-services.json پیدا نشد؛ Firebase غیرفعال است (فایل را در app/ بگذارید).')
+}
+
+/* ---- مقادیر حساس/محیطی: از store-secrets.properties، پروپرتی Gradle یا متغیر محیطی ---- */
+def secrets = new Properties()
+def secretsFile = rootProject.file('store-secrets.properties')
+if (secretsFile.exists()) secretsFile.withInputStream { secrets.load(it) }
+def conf = { String key, String dflt ->
+    String v = secrets.getProperty(key) ?: project.findProperty(key) ?: System.getenv(key) ?: dflt
+    return v.trim()
+}
+def q = { String s -> '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"' }   // رشته برای buildConfigField
+
+def siteUrl = conf('SITE_URL', 'https://boreshglass.ir/web/')
+if (!siteUrl.startsWith('https://')) throw new GradleException('SITE_URL باید با https:// شروع شود')
+if (!siteUrl.endsWith('/')) siteUrl += '/'
+
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+
+android {
+    namespace 'ir.boreshyar.glass'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 21
+        targetSdk 34
+        versionCode 2
+        versionName '1.1.0'
+        buildConfigField 'String', 'SITE_URL', q(siteUrl)
+    }
+
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // applicationId عمداً تغییر نمی‌کند: تست خرید فروشگاه فقط با packageName ثبت‌شده در پنل کار می‌کند
+            versionNameSuffix '-debug'
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (keystoreFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+
+    /* دو خروجی مستقل. هر دو از همان کتابخانهٔ myket-billing-client استفاده می‌کنند و فقط placeholderهای
+     * مانیفست (بستهٔ فروشگاه، آدرس BIND، مجوز) و کلید عمومی فرق دارد — دقیقاً طبق مستند رسمی مایکت. */
+    flavorDimensions 'store'
+    productFlavors {
+        myket {
+            dimension 'store'
+            applicationId conf('MYKET_APP_ID', 'ir.boreshyar.glass')
+            def marketApplicationId = 'ir.mservices.market'
+            manifestPlaceholders = [marketApplicationId: marketApplicationId,
+                                    marketBindAddress  : 'ir.mservices.market.InAppBillingService.BIND',
+                                    marketPermission   : "${marketApplicationId}.BILLING"]
+            buildConfigField 'String', 'PLATFORM', '"MYKET"'
+            buildConfigField 'String', 'IAB_PUBLIC_KEY', q(conf('MYKET_PUBLIC_KEY', ''))
+            buildConfigField 'String', 'ALLOWED_SKUS', q(conf('MYKET_SKUS', 'plan__6m,plan_12m,plan_lifetime'))
+        }
+        bazaar {
+            dimension 'store'
+            applicationId conf('BAZAAR_APP_ID', 'ir.boreshyar.glass')
+            manifestPlaceholders = [marketApplicationId: 'com.farsitel.bazaar',
+                                    marketBindAddress  : 'ir.cafebazaar.pardakht.InAppBillingService.BIND',
+                                    marketPermission   : 'com.farsitel.bazaar.permission.PAY_THROUGH_BAZAAR']
+            buildConfigField 'String', 'PLATFORM', '"BAZAAR"'
+            buildConfigField 'String', 'IAB_PUBLIC_KEY', q(conf('BAZAAR_PUBLIC_KEY', ''))
+            buildConfigField 'String', 'ALLOWED_SKUS', q(conf('BAZAAR_SKUS', ''))
+        }
+    }
+}
+
+/* بیلد Release با آدرس نمونه یا بدون امضا نباید ساخته شود */
+tasks.configureEach { t ->
+    if (t.name.startsWith('assemble') && t.name.endsWith('Release') || t.name.startsWith('bundle') && t.name.endsWith('Release')) {
+        t.doFirst {
+            if (siteUrl.contains('example.com')) throw new GradleException('SITE_URL هنوز مقدار نمونه است (store-secrets.properties)')
+            if (!keystoreFile.exists()) throw new GradleException('keystore.properties پیدا نشد؛ بیلد Release بدون امضا ساخته نمی‌شود')
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+    // Firebase: Analytics + Crashlytics + Cloud Messaging (نسخه‌ها را BoM یکدست می‌کند)
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation 'com.google.firebase:firebase-crashlytics'
+    implementation 'com.google.firebase:firebase-messaging'
+    // هم برای مایکت و هم برای بازار (طبق مستند مایکت با productFlavors)
+    implementation 'com.github.myketstore:myket-billing-client:1.6'
+}
