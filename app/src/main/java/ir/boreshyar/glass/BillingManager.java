@@ -2,6 +2,7 @@ package ir.boreshyar.glass;
 
 import android.app.Activity;
 import android.content.Context;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -129,7 +130,6 @@ final class BillingManager {
                         @Override public void onIabPurchaseFinished(IabResult result, Purchase p) {
                             if (helper == null) { cb.done(res(false, "error", "disposed")); return; }
                             if (result != null && result.isSuccess() && p != null) {
-                                // امضای خرید را خود کتابخانه با کلید عمومی بررسی کرده؛ سرور دوباره بررسی می‌کند.
                                 if (!sku.equals(p.getSku()) || !payload.equals(p.getDeveloperPayload())) {
                                     cb.done(res(false, "error", "payload_mismatch"));
                                     return;

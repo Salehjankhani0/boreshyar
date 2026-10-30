@@ -6,6 +6,9 @@ import android.content.Intent;
 import androidx.appcompat.app.AlertDialog;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -14,6 +17,8 @@ import android.os.Bundle;
 import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.JsResult;
+import android.webkit.ServiceWorkerController;
+import android.webkit.ServiceWorkerWebSettings;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -56,6 +61,7 @@ public class MainActivity extends AppCompatActivity {
     private String nativeTweaks = "";
     private String pendingUrl = null;           // صفحه‌ای که اعلان می‌خواهد باز کند (فقط مبدأ مجاز)
     private boolean askedNotifPermission = false;
+    private boolean cacheRetryDone = false;     // برای هر بارگذاری فقط یک‌بار با کش دوباره تلاش می‌شود
     private ActivityResultLauncher<String> notifPermission;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -100,6 +106,15 @@ public class MainActivity extends AppCompatActivity {
         s.setTextZoom(100);                    // تغییر اندازهٔ فونت سیستم، چیدمان سایت را به‌هم نریزد
         s.setSafeBrowsingEnabled(true);
 
+        // ---- Service Worker در WebView: قبل از اولین loadUrl باید راه‌اندازی شود تا آفلاین کار کند ----
+        if (Build.VERSION.SDK_INT >= 24) {
+            ServiceWorkerWebSettings sws = ServiceWorkerController.getInstance().getServiceWorkerWebSettings();
+            sws.setCacheMode(WebSettings.LOAD_DEFAULT);
+            sws.setAllowContentAccess(false);
+            sws.setAllowFileAccess(false);
+            sws.setBlockNetworkLoads(false);
+        }
+
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(webView, false);
@@ -135,23 +150,23 @@ public class MainActivity extends AppCompatActivity {
             @Override public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
                 if (isFinishing()) { result.cancel(); return true; }
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle(R.string.app_name)
-                    .setMessage(message)
-                    .setCancelable(false)
-                    .setPositiveButton(R.string.dialog_ok, (d, w) -> result.confirm())
-                    .show();
+                        .setTitle(R.string.app_name)
+                        .setMessage(message)
+                        .setCancelable(false)
+                        .setPositiveButton(R.string.dialog_ok, (d, w) -> result.confirm())
+                        .show();
                 return true;
             }
 
             @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
                 if (isFinishing()) { result.cancel(); return true; }
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle(R.string.app_name)
-                    .setMessage(message)
-                    .setCancelable(false)
-                    .setPositiveButton(R.string.dialog_ok, (d, w) -> result.confirm())
-                    .setNegativeButton(R.string.dialog_cancel, (d, w) -> result.cancel())
-                    .show();
+                        .setTitle(R.string.app_name)
+                        .setMessage(message)
+                        .setCancelable(false)
+                        .setPositiveButton(R.string.dialog_ok, (d, w) -> result.confirm())
+                        .setNegativeButton(R.string.dialog_cancel, (d, w) -> result.cancel())
+                        .show();
                 return true;
             }
         });
@@ -217,7 +232,28 @@ public class MainActivity extends AppCompatActivity {
         webView.setVisibility(View.VISIBLE);
         String target = pendingUrl != null ? pendingUrl : TrustedOrigin.siteUrl();
         pendingUrl = null;
+        cacheRetryDone = false;
+        // آفلاین: اگر Service Worker هم جواب ندهد، کش HTTP خود WebView استفاده شود
+        webView.getSettings().setCacheMode(isOnline() ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_CACHE_ELSE_NETWORK);
         webView.loadUrl(target);
+    }
+
+    @SuppressWarnings("deprecation")
+    private boolean isOnline() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            if (Build.VERSION.SDK_INT >= 23) {
+                Network n = cm.getActiveNetwork();
+                if (n == null) return false;
+                NetworkCapabilities c = cm.getNetworkCapabilities(n);
+                return c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            }
+            android.net.NetworkInfo ni = cm.getActiveNetworkInfo();
+            return ni != null && ni.isConnected();
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     private void showError(String title, String text, boolean canRetry) {
@@ -235,12 +271,12 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         webView.evaluateJavascript(
-            "(function(){try{return !!(window.__gcHandleBack&&window.__gcHandleBack());}catch(e){return false;}})()",
-            new ValueCallback<String>() {
-                @Override public void onReceiveValue(String v) {
-                    if (!"true".equals(v)) finish();
-                }
-            });
+                "(function(){try{return !!(window.__gcHandleBack&&window.__gcHandleBack());}catch(e){return false;}})()",
+                new ValueCallback<String>() {
+                    @Override public void onReceiveValue(String v) {
+                        if (!"true".equals(v)) finish();
+                    }
+                });
     }
 
     private final class SiteClient extends WebViewClient {
@@ -274,7 +310,15 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-            if (request.isForMainFrame()) showError(getString(R.string.err_title), getString(R.string.err_offline), true);
+            if (!request.isForMainFrame()) return;
+            // یک‌بار با کش دوباره تلاش کن (کاربر آفلاین است یا شبکه ضعیف است)؛ فقط اگر کش هم نبود خطا نشان بده
+            if (!cacheRetryDone) {
+                cacheRetryDone = true;
+                view.getSettings().setCacheMode(WebSettings.LOAD_CACHE_ELSE_NETWORK);
+                view.loadUrl(request.getUrl().toString());
+                return;
+            }
+            showError(getString(R.string.err_title), getString(R.string.err_offline), true);
         }
 
         @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
@@ -292,6 +336,8 @@ public class MainActivity extends AppCompatActivity {
     @Override protected void onResume() {
         super.onResume();
         webView.onResume();
+        // برگشت به برنامه: اگر آنلاین است، دوباره کش عادی (نسخهٔ تازه) استفاده شود
+        if (isOnline()) webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
     }
 
     @Override protected void onDestroy() {

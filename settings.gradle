@@ -1,10 +1,12 @@
 pluginManagement {
-    repositories {maven { url 'https://maven.myket.ir' }}
+    repositories {maven { url 'https://maven.myket.ir' }
+        google()}
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         maven { url 'https://maven.myket.ir' }
+        google()
     }
 }
 rootProject.name = 'GlassCut'

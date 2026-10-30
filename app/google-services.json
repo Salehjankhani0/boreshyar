@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "301193494253",
+    "project_id": "boreshyar-e8f3a",
+    "storage_bucket": "boreshyar-e8f3a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:301193494253:android:15aa4b7fab486835f3d6e4",
+        "android_client_info": {
+          "package_name": "ir.boreshyar.glass"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALViB4elFY-00DqmKODj198JJ82mM3vBc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
